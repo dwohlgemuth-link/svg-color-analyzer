@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title data-i18n="title">SVG Farb-Analysator</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            900: '#312e81',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* slate-50 */
+            color: #1e293b; /* slate-800 */
+        }
+
+        .bg-stripes {
+            background-image: repeating-linear-gradient(45deg, #e2e8f0 25%, transparent 25%, transparent 75%, #e2e8f0 75%, #e2e8f0), 
+                              repeating-linear-gradient(45deg, #e2e8f0 25%, #ffffff 25%, #ffffff 75%, #e2e8f0 75%, #e2e8f0);
+            background-position: 0 0, 4px 4px;
+            background-size: 8px 8px;
+        }
+
+        .drag-over {
+            background-color: #f1f5f9 !important; /* slate-100 */
+            border-color: #6366f1 !important; /* indigo-500 */
+        }
+        
+        /* Custom scrollbar for table */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+    </style>
+
+    <script>
+        // PWA Setup
+        document.addEventListener('DOMContentLoaded', () => {
+            const manifestData = {
+                "name": "SVG Color Analyzer",
+                "short_name": "SVG Colors",
+                "start_url": ".",
+                "display": "standalone",
+                "background_color": "#f8fafc",
+                "theme_color": "#4f46e5",
+                "icons": [
+                    {
+                        "src": "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%234f46e5' rx='100'/%3E%3Ccircle cx='256' cy='256' r='150' fill='white' opacity='0.2'/%3E%3Cpath d='M256 106L386 331H126Z' fill='white'/%3E%3C/svg%3E",
+                        "sizes": "192x192 512x512",
+                        "type": "image/svg+xml",
+                        "purpose": "any maskable"
+                    }
+                ]
+            };
+            const manifestBlob = new Blob([JSON.stringify(manifestData)], {type: 'application/json'});
+            const manifestUrl = URL.createObjectURL(manifestBlob);
+            
+            const manifestLink = document.createElement('link');
+            manifestLink.rel = 'manifest';
+            manifestLink.href = manifestUrl;
+            document.head.appendChild(manifestLink);
+
+            const appleIcon = document.createElement('link');
+            appleIcon.rel = 'apple-touch-icon';
+            appleIcon.href = manifestData.icons[0].src;
+            document.head.appendChild(appleIcon);
+        });
+
+        const swCode = `
+            const CACHE_NAME = 'svg-color-v1';
+            self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()));
+            self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+            self.addEventListener('fetch', (event) => event.respondWith(fetch(event.request).catch(() => caches.match(event.request))));
+        `;
+        try {
+            const blob = new Blob([swCode], { type: 'application/javascript' });
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(e => console.info('SW blockiert (OK in Vorschau)'));
+            }
+        } catch(e) {}
+    </script>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <!-- Header / Language Toggle -->
+    <div class="max-w-5xl mx-auto flex justify-end mb-4">
+        <button id="langBtn" onclick="toggleLanguage()" class="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg px-4 py-2 text-sm font-bold shadow-sm transition-colors">
+            EN
+        </button>
+    </div>
+
+    <div class="max-w-5xl mx-auto space-y-8">
+        <!-- Title Section -->
+        <header class="text-center space-y-4">
+            <div class="inline-flex items-center justify-center p-3 bg-brand-100 rounded-2xl mb-2 text-brand-600">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+            </div>
+            <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900" data-i18n="appTitle">
+                SVG Farb-Analysator
+            </h1>
+            <p class="text-base md:text-lg text-slate-600 max-w-2xl mx-auto px-4" data-i18n="appDesc">
+                Lade eine Vektorgrafik (.svg) hoch, um pixelgenau zu berechnen, welche Farben in welchem Verhältnis darin enthalten sind.
+            </p>
+        </header>
+
+        <!-- Main Card -->
+        <main class="bg-white rounded-3xl shadow-xl shadow-slate-200/50 overflow-hidden border border-slate-100">
+            
+            <!-- Upload View -->
+            <div id="uploadView" class="p-8 md:p-12 border-2 border-dashed border-slate-200 rounded-3xl m-4 md:m-8 bg-slate-50 hover:bg-slate-100 transition-colors flex flex-col items-center justify-center text-center cursor-pointer group">
+                <input id="fileUpload" type="file" accept=".svg" class="hidden" />
+                <div class="bg-white p-4 rounded-full shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-500"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/></svg>
+                </div>
+                <h3 class="text-xl font-semibold mb-2" data-i18n="dropTitle">SVG hier ablegen oder klicken</h3>
+                <p class="text-slate-500 max-w-sm text-sm" data-i18n="dropDesc">
+                    Unterstützt nur Dateien im Format .svg. Die Analyse erfolgt komplett lokal in deinem Browser.
+                </p>
+            </div>
+
+            <!-- Analysis View (Hidden initially) -->
+            <div id="analysisView" class="p-6 md:p-8 hidden">
+                <div class="flex flex-col lg:flex-row gap-8 items-start">
+                    
+                    <!-- Left Column: Controls -->
+                    <div class="w-full lg:w-1/3 space-y-6">
+                        <div class="bg-slate-50 rounded-2xl p-4 border border-slate-200 flex flex-col items-center justify-center min-h-[250px] relative">
+                            <img id="svgPreview" src="" alt="SVG Preview" class="max-w-full max-h-64 object-contain drop-shadow-md" />
+                        </div>
+                        
+                        <div class="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
+                            <h3 class="font-semibold flex items-center gap-2 text-slate-800">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                                <span data-i18n="fileInfo">Datei-Info</span>
+                            </h3>
+                            <div class="text-sm text-slate-600 space-y-2">
+                                <p class="truncate"><span class="font-medium text-slate-800" data-i18n="lblFile">Name:</span> <span id="fileName"></span></p>
+                                <p><span class="font-medium text-slate-800" data-i18n="lblSize">Größe:</span> <span id="fileSize"></span> KB</p>
+                            </div>
+
+                            <div class="pt-4 border-t border-slate-200 space-y-4">
+                                <h4 class="font-medium text-sm text-slate-800" data-i18n="optTitle">Analyse-Optionen</h4>
+                                
+                                <label class="flex items-center gap-2 text-sm cursor-pointer text-slate-700 select-none">
+                                    <input type="checkbox" id="chkIgnoreTrans" checked class="rounded text-brand-600 focus:ring-brand-500 h-4 w-4" />
+                                    <span data-i18n="optIgnore">Transparent ignorieren</span>
+                                </label>
+                                
+                                <div class="space-y-1 pt-2">
+                                    <div class="flex justify-between items-center text-sm">
+                                        <label class="text-slate-700 flex items-center gap-1">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>
+                                            <span data-i18n="optTolerance">Toleranz</span>
+                                        </label>
+                                        <span class="font-medium text-brand-600" id="tolValue">10%</span>
+                                    </div>
+                                    <input type="range" id="rngTolerance" min="0" max="50" value="10" class="w-full accent-brand-600" />
+                                    <p class="text-[11px] text-slate-500 leading-tight mt-1" data-i18n="optTolDesc">
+                                        Gruppiert ähnliche Farbtöne (Kantenglättung) zur Hauptfarbe. 0% = exakte Pixel.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button id="btnReset" class="w-full mt-4 py-2 px-4 bg-white border border-slate-300 rounded-lg text-slate-700 font-medium hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 text-sm">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                                <span data-i18n="btnReset">Andere Datei</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Results -->
+                    <div class="w-full lg:w-2/3">
+                        <h2 class="text-2xl font-bold mb-6 flex items-center gap-2 text-slate-800">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-500"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                            <span data-i18n="resTitle">Analyse-Ergebnisse</span>
+                        </h2>
+
+                        <div id="errorBox" class="hidden bg-red-50 text-red-700 p-4 rounded-xl border border-red-200 mb-6 text-sm"></div>
+
+                        <!-- Loading State -->
+                        <div id="loadingState" class="hidden flex-col items-center justify-center h-64 text-slate-500 space-y-4">
+                            <div class="w-10 h-10 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin"></div>
+                            <p data-i18n="resLoading">Analysiere Pixel...</p>
+                        </div>
+
+                        <!-- Results State -->
+                        <div id="resultsState" class="hidden space-y-6">
+                            
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="bg-brand-50 p-4 rounded-xl border border-brand-100">
+                                    <p class="text-sm text-brand-600 font-medium mb-1" data-i18n="statPixels">Analysierte Pixel</p>
+                                    <p id="statTotalPixels" class="text-2xl font-bold text-brand-900">0</p>
+                                </div>
+                                <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+                                    <p class="text-sm text-emerald-600 font-medium mb-1" data-i18n="statGroups">Farbgruppen</p>
+                                    <p id="statTotalGroups" class="text-2xl font-bold text-emerald-900">0</p>
+                                    <p id="statGroupsSub" class="text-[11px] text-emerald-700/80 mt-1 hidden"></p>
+                                </div>
+                            </div>
+
+                            <div id="transInfoBox" class="hidden text-sm text-slate-500 flex items-center gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>
+                                <span id="transInfoText"></span>
+                            </div>
+
+                            <div class="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                                <div class="max-h-[500px] overflow-y-auto custom-scrollbar">
+                                    <table class="w-full text-left text-sm">
+                                        <thead class="bg-slate-50 sticky top-0 border-b border-slate-200 shadow-sm z-10">
+                                            <tr>
+                                                <th class="px-4 py-3 font-semibold text-slate-700" data-i18n="thColor">Farbe</th>
+                                                <th class="px-4 py-3 font-semibold text-slate-700" data-i18n="thHex">HEX Code</th>
+                                                <th class="px-4 py-3 font-semibold text-slate-700 text-right" data-i18n="thPixels">Pixel</th>
+                                                <th class="px-4 py-3 font-semibold text-slate-700 text-right" data-i18n="thShare">Anteil</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="resultsTableBody" class="divide-y divide-slate-100">
+                                            <!-- Dynamically populated -->
+                                        </tbody>
+                                        <tfoot class="bg-slate-50 border-t border-slate-200">
+                                            <tr>
+                                                <td colSpan="2" class="px-4 py-3 font-semibold text-slate-700 text-right" data-i18n="thTotal">Gesamt:</td>
+                                                <td id="tfTotalPixels" class="px-4 py-3 text-right tabular-nums text-slate-700 font-semibold">0</td>
+                                                <td class="px-4 py-3 text-right tabular-nums text-brand-600 font-bold sm:pr-12">100.00%</td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Hidden Canvas -->
+    <canvas id="renderCanvas" class="hidden"></canvas>
+
+    <script>
+        // Translations
+        const i18n = {
+            de: {
+                title: "SVG Farb-Analysator", appTitle: "SVG Farb-Analysator",
+                appDesc: "Lade eine Vektorgrafik (.svg) hoch, um pixelgenau zu berechnen, welche Farben in welchem Verhältnis darin enthalten sind.",
+                dropTitle: "SVG hier ablegen oder klicken", dropDesc: "Unterstützt nur Dateien im Format .svg. Die Analyse erfolgt komplett lokal in deinem Browser.",
+                fileInfo: "Datei-Info", lblFile: "Name:", lblSize: "Größe:",
+                optTitle: "Analyse-Optionen", optIgnore: "Transparent ignorieren",
+                optTolerance: "Toleranz", optTolDesc: "Gruppiert ähnliche Farbtöne (Kantenglättung) zur Hauptfarbe. 0% = exakte Pixel.",
+                btnReset: "Andere Datei", resTitle: "Analyse-Ergebnisse", resLoading: "Analysiere Pixel...",
+                statPixels: "Analysierte Pixel", statGroups: "Farbgruppen",
+                thColor: "Farbe", thHex: "HEX Code", thPixels: "Pixel", thShare: "Anteil", thTotal: "Gesamt:",
+                errType: "Bitte lade eine gültige SVG-Datei hoch.", errCanvas: "Canvas Kontext Fehler.", 
+                errImgLoad: "Fehler beim Konvertieren der SVG.", errCORS: "Fehler bei der Bildanalyse (CORS/Defekte SVG).",
+                txtTransInfo: "{0} transparente Pixel ignoriert.", txtGroupSub: "Aus {0} exakten Farbtönen zusammengefasst."
+            },
+            en: {
+                title: "SVG Color Analyzer", appTitle: "SVG Color Analyzer",
+                appDesc: "Upload a vector graphic (.svg) to calculate exactly which colors are present and in what proportions, pixel by pixel.",
+                dropTitle: "Drop SVG here or click", dropDesc: "Supports .svg files only. Analysis happens entirely locally in your browser.",
+                fileInfo: "File Info", lblFile: "Name:", lblSize: "Size:",
+                optTitle: "Analysis Options", optIgnore: "Ignore transparent",
+                optTolerance: "Tolerance", optTolDesc: "Groups similar shades (anti-aliasing) to the main color. 0% = exact pixels.",
+                btnReset: "Choose another file", resTitle: "Analysis Results", resLoading: "Analyzing pixels...",
+                statPixels: "Analyzed Pixels", statGroups: "Color Groups",
+                thColor: "Color", thHex: "HEX Code", thPixels: "Pixels", thShare: "Share", thTotal: "Total:",
+                errType: "Please upload a valid SVG file.", errCanvas: "Canvas Context Error.",
+                errImgLoad: "Error converting the SVG.", errCORS: "Error during image analysis (CORS/Broken SVG).",
+                txtTransInfo: "{0} transparent pixels ignored.", txtGroupSub: "Grouped from {0} exact shades."
+            }
+        };
+
+        let currentLang = 'de';
+        let currentFile = null;
+        let svgDataUrl = null;
+        let debounceTimer;
+
+        // UI Elements
+        const uploadView = document.getElementById('uploadView');
+        const analysisView = document.getElementById('analysisView');
+        const fileInput = document.getElementById('fileUpload');
+        const svgPreview = document.getElementById('svgPreview');
+        const canvas = document.getElementById('renderCanvas');
+        
+        // Input Options
+        const chkIgnoreTrans = document.getElementById('chkIgnoreTrans');
+        const rngTolerance = document.getElementById('rngTolerance');
+        const tolValue = document.getElementById('tolValue');
+
+        function updateTexts() {
+            document.documentElement.lang = currentLang;
+            document.title = i18n[currentLang].title;
+            document.getElementById('langBtn').textContent = currentLang === 'de' ? 'EN' : 'DE';
+
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if(i18n[currentLang][key]) el.textContent = i18n[currentLang][key];
+            });
+
+            // Trigger re-render of results to update dynamic text if we are viewing results
+            if(svgDataUrl && !document.getElementById('loadingState').classList.contains('hidden') == false) {
+                renderResultsUI();
+            }
+        }
+
+        function toggleLanguage() {
+            currentLang = currentLang === 'de' ? 'en' : 'de';
+            updateTexts();
+        }
+
+        // Event Listeners for Drag & Drop
+        uploadView.addEventListener('click', () => fileInput.click());
+        uploadView.addEventListener('dragover', (e) => { e.preventDefault(); uploadView.classList.add('drag-over'); });
+        uploadView.addEventListener('dragleave', () => uploadView.classList.remove('drag-over'));
+        uploadView.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadView.classList.remove('drag-over');
+            if(e.dataTransfer.files.length) processFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if(e.target.files.length) processFile(e.target.files[0]);
+        });
+
+        document.getElementById('btnReset').addEventListener('click', reset);
+        
+        chkIgnoreTrans.addEventListener('change', triggerAnalysis);
+        rngTolerance.addEventListener('input', (e) => {
+            tolValue.textContent = e.target.value + '%';
+            triggerAnalysis();
+        });
+
+        function reset() {
+            currentFile = null;
+            svgDataUrl = null;
+            fileInput.value = '';
+            uploadView.classList.remove('hidden');
+            analysisView.classList.add('hidden');
+            document.getElementById('errorBox').classList.add('hidden');
+        }
+
+        function processFile(file) {
+            if (!file) return;
+            if (file.type !== 'image/svg+xml' && !file.name.toLowerCase().endsWith('.svg')) {
+                showError(i18n[currentLang].errType);
+                return;
+            }
+
+            currentFile = file;
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = (file.size / 1024).toFixed(2);
+            document.getElementById('errorBox').classList.add('hidden');
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                svgDataUrl = e.target.result;
+                svgPreview.src = svgDataUrl;
+                uploadView.classList.add('hidden');
+                analysisView.classList.remove('hidden');
+                triggerAnalysis();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function showError(msg) {
+            const errBox = document.getElementById('errorBox');
+            errBox.textContent = msg;
+            errBox.classList.remove('hidden');
+            document.getElementById('loadingState').classList.add('hidden');
+            document.getElementById('resultsState').classList.add('hidden');
+        }
+
+        function triggerAnalysis() {
+            clearTimeout(debounceTimer);
+            document.getElementById('loadingState').classList.remove('hidden');
+            document.getElementById('resultsState').classList.add('hidden');
+            document.getElementById('errorBox').classList.add('hidden');
+            
+            // Allow UI to update before heavy JS task
+            debounceTimer = setTimeout(analyzeSVG, 50);
+        }
+
+        // Color Math Helpers
+        const rgbToHex = (r, g, b) => "#" + (1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1).toUpperCase();
+        const hexToRgb = (hex) => {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+        };
+
+        // Global variable to hold latest results
+        let lastAnalysisResult = null;
+
+        function analyzeSVG() {
+            if (!svgDataUrl) return;
+
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) { showError(i18n[currentLang].errCanvas); return; }
+
+            const img = new Image();
+            img.onload = () => {
+                const MAX_DIM = 2000;
+                let w = img.width || 800;
+                let h = img.height || 800;
+
+                if (w > MAX_DIM || h > MAX_DIM) {
+                    const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+                    w = Math.floor(w * ratio);
+                    h = Math.floor(h * ratio);
+                }
+
+                canvas.width = w;
+                canvas.height = h;
+                ctx.clearRect(0, 0, w, h);
+
+                try {
+                    ctx.drawImage(img, 0, 0, w, h);
+                    const imageData = ctx.getImageData(0, 0, w, h).data;
+                    
+                    const colorCounts = new Map();
+                    let totalRelevant = 0;
+                    let transPixels = 0;
+                    const ignore = chkIgnoreTrans.checked;
+                    const tolVal = parseInt(rngTolerance.value);
+
+                    // 1. Count exact colors
+                    for (let i = 0; i < imageData.length; i += 4) {
+                        const r = imageData[i], g = imageData[i+1], b = imageData[i+2], a = imageData[i+3];
+                        
+                        if (a < 10) {
+                            transPixels++;
+                            if (ignore) continue;
+                        }
+
+                        let key = (a < 10 && !ignore) ? "Transparent" : rgbToHex(r, g, b);
+                        totalRelevant++;
+                        colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
+                    }
+
+                    // 2. Group by tolerance
+                    const MAX_DIST = 441.67;
+                    const tolDist = (tolVal / 100) * MAX_DIST;
+                    
+                    const sortedExact = Array.from(colorCounts.entries()).sort((a, b) => b[1] - a[1]);
+                    const grouped = [];
+
+                    for (const [key, count] of sortedExact) {
+                        if (key === 'Transparent') {
+                            grouped.push({ color: key, count });
+                            continue;
+                        }
+
+                        let found = false;
+                        const rgb = hexToRgb(key);
+
+                        if (rgb && tolDist > 0) {
+                            for (const group of grouped) {
+                                if (group.color === 'Transparent') continue;
+                                const grgb = group.rgb;
+                                const dist = Math.sqrt(Math.pow(grgb.r - rgb.r,2) + Math.pow(grgb.g - rgb.g,2) + Math.pow(grgb.b - rgb.b,2));
+                                if (dist <= tolDist) {
+                                    group.count += count;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!found) {
+                            grouped.push({ color: key, count: count, rgb: rgb });
+                        }
+                    }
+
+                    // 3. Hare-Niemeyer Math for exact 100.00%
+                    let finalResults = [];
+                    if (totalRelevant > 0) {
+                        let mapped = grouped.map(g => {
+                            const exact = (g.count / totalRelevant) * 100;
+                            const floored = Math.floor(exact * 100);
+                            return { ...g, exact, floored, remainder: (exact * 100) - floored, allocated: floored };
+                        });
+
+                        let sumFloored = mapped.reduce((sum, item) => sum + item.floored, 0);
+                        let diff = 10000 - sumFloored;
+                        mapped.sort((a, b) => b.remainder - a.remainder);
+
+                        for (let i = 0; i < diff; i++) {
+                            if (mapped.length > 0) mapped[i % mapped.length].allocated += 1;
+                        }
+
+                        finalResults = mapped.map(item => ({
+                            color: item.color, count: item.count, 
+                            percentage: item.allocated / 100, displayPct: (item.allocated / 100).toFixed(2)
+                        }));
+                    }
+                    
+                    finalResults.sort((a, b) => b.percentage - a.percentage);
+
+                    lastAnalysisResult = {
+                        colors: finalResults,
+                        total: totalRelevant,
+                        transIgnored: ignore ? transPixels : 0,
+                        origCount: colorCounts.size
+                    };
+
+                    renderResultsUI();
+
+                } catch(err) {
+                    showError(i18n[currentLang].errCORS);
+                }
+            };
+            img.onerror = () => showError(i18n[currentLang].errImgLoad);
+            img.src = svgDataUrl;
+        }
+
+        function renderResultsUI() {
+            if(!lastAnalysisResult) return;
+            const res = lastAnalysisResult;
+
+            document.getElementById('loadingState').classList.add('hidden');
+            document.getElementById('resultsState').classList.remove('hidden');
+
+            document.getElementById('statTotalPixels').textContent = res.total.toLocaleString();
+            document.getElementById('statTotalGroups').textContent = res.colors.length;
+            document.getElementById('tfTotalPixels').textContent = res.total.toLocaleString();
+
+            const sub = document.getElementById('statGroupsSub');
+            if (res.origCount > res.colors.length) {
+                sub.textContent = i18n[currentLang].txtGroupSub.replace('{0}', res.origCount);
+                sub.classList.remove('hidden');
+            } else {
+                sub.classList.add('hidden');
+            }
+
+            const tBox = document.getElementById('transInfoBox');
+            if (res.transIgnored > 0) {
+                document.getElementById('transInfoText').textContent = i18n[currentLang].txtTransInfo.replace('{0}', res.transIgnored.toLocaleString());
+                tBox.classList.remove('hidden');
+            } else {
+                tBox.classList.add('hidden');
+            }
+
+            const tbody = document.getElementById('resultsTableBody');
+            tbody.innerHTML = '';
+            
+            res.colors.forEach(item => {
+                const isTrans = item.color === 'Transparent';
+                const bgStyle = isTrans 
+                    ? `background-image: repeating-linear-gradient(45deg, #e2e8f0 25%, transparent 25%, transparent 75%, #e2e8f0 75%, #e2e8f0), repeating-linear-gradient(45deg, #e2e8f0 25%, #ffffff 25%, #ffffff 75%, #e2e8f0 75%, #e2e8f0); background-position: 0 0, 4px 4px; background-size: 8px 8px;` 
+                    : `background-color: ${item.color};`;
+
+                tbody.innerHTML += `
+                    <tr class="hover:bg-slate-50 transition-colors">
+                        <td class="px-4 py-3">
+                            <div class="w-8 h-8 rounded-md shadow-sm border border-black/10" style="${bgStyle}"></div>
+                        </td>
+                        <td class="px-4 py-3 font-mono text-slate-600">${item.color}</td>
+                        <td class="px-4 py-3 text-right tabular-nums text-slate-600">${item.count.toLocaleString()}</td>
+                        <td class="px-4 py-3 text-right">
+                            <div class="flex items-center justify-end gap-2">
+                                <span class="tabular-nums font-medium text-slate-800 min-w-[3rem]">${item.displayPct}%</span>
+                                <div class="w-24 h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                    <div class="h-full bg-brand-500 rounded-full" style="width: ${item.percentage}%"></div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+    </script>
+</body>
+</html>
